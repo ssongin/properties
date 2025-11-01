@@ -1,0 +1,41 @@
+name: Commit Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  validate-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate commit prefix
+        run: |
+          # Fetch full history for comparison
+          git fetch origin ${{ github.base_ref }} --depth=1000
+
+          commits=$(git log --pretty=%s origin/${{ github.base_ref }}..HEAD || true)
+          echo "Commits to validate:"
+          echo "$commits"
+
+          shopt -s nocasematch
+          invalid=0
+
+          while IFS= read -r msg; do
+            [[ -z "$msg" ]] && continue
+            if [[ "$msg" =~ ^merge ]]; then
+              echo "Merge commit detected — skipping: $msg"
+              continue
+            fi
+
+            if [[ "$msg" =~ ^(epic|major|feat|fix|build|chore|perf|refactor|revert|style|cicd|docs|test)(\([^\)]*\))?: ]]; then
+              echo "Valid: $msg"
+            else
+              echo "Invalid commit prefix: $msg"
+              invalid=1
+            fi
+          done <<< "$commits"
+
+          exit $invalid
