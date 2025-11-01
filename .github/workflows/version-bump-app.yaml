@@ -1,0 +1,64 @@
+name: Version Bump (Application)
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "app/**"
+      - ".github/workflows/version-bump-app.yaml"
+
+permissions:
+  contents: write 
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Extract last non-merge commit message
+        id: commit
+        run: |
+          COMMIT_MSG=$(git log --no-merges -1 --pretty=%s)
+          echo "message=$COMMIT_MSG" >> $GITHUB_OUTPUT
+
+      - name: Skip version bump for docs/test/Merge
+        if: startsWith(steps.commit.outputs.message, 'docs') || startsWith(steps.commit.outputs.message, 'test') || startsWith(steps.commit.outputs.message, 'Merge')
+        run: echo "Skipping version bump and Docker image for docs/test/Merge commit" && exit 0
+
+      - name: Get latest tag
+        id: version
+        run: |
+          git fetch --tags
+          latest=$(git tag --sort=-v:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+          latest=${latest#v}
+          echo "latest=$latest" >> $GITHUB_OUTPUT
+
+      - name: Calculate next version
+        id: semver
+        run: |
+          IFS='.' read -r major minor patch <<< "${{ steps.version.outputs.latest || '0.0.0' }}"
+          raw="${{ steps.commit.outputs.message }}"
+
+          prefix=$(echo "$raw" | sed -E 's/^([a-zA-Z]+)(\(.+\))?:.*/\1/')
+          echo "Detected prefix: $prefix"
+
+          case "$prefix" in
+            epic|major) major=$((major + 1)); minor=0; patch=0 ;;
+            feat) minor=$((minor + 1)); patch=0 ;;
+            fix|build|chore|perf|refactor|revert|style|cicd) patch=$((patch + 1)) ;;
+            docs|test|Merge) echo "No version bump"; exit 0 ;;
+            *) echo "Invalid commit prefix"; exit 1 ;;
+          esac
+
+          new_version="$major.$minor.$patch"
+          echo "version=$new_version" >> $GITHUB_OUTPUT
+
+      - name: Tag commit and push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git tag ${{ steps.semver.outputs.version }}
+          git push origin ${{ steps.semver.outputs.version }}
